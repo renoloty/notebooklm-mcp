@@ -16,6 +16,7 @@ import type { AuthManager } from "../auth/auth-manager.js";
 import { BrowserSession } from "./browser-session.js";
 import { SharedContextManager } from "./shared-context-manager.js";
 import { CONFIG } from "../config.js";
+import { normalizeNotebookUrl } from "../notebooklm/urls.js";
 import { log } from "../utils/logger.js";
 import type { SessionInfo } from "../types.js";
 import { randomBytes } from "crypto";
@@ -68,8 +69,10 @@ export class SessionManager {
     notebookUrl?: string,
     overrideHeadless?: boolean
   ): Promise<BrowserSession> {
-    // Determine target notebook URL
-    const targetUrl = (notebookUrl || CONFIG.notebookUrl || "").trim();
+    // Determine target notebook URL. Normalised up-front so the same notebook
+    // reached via the legacy host, a trailing slash or a `?addSource=true`
+    // query resolves to one cache key instead of spawning duplicate sessions.
+    const targetUrl = normalizeNotebookUrl(notebookUrl || CONFIG.notebookUrl || "");
     if (!targetUrl) {
       throw new Error("Notebook URL is required to create a session");
     }
@@ -185,9 +188,12 @@ export class SessionManager {
    */
   async closeSessionsForNotebook(url: string): Promise<number> {
     let closed = 0;
+    // Sessions store the normalised URL, so the caller's raw value (possibly
+    // still on the legacy host) has to be normalised to match.
+    const target = normalizeNotebookUrl(url);
 
     for (const [sessionId, session] of Array.from(this.sessions.entries())) {
-      if (session.notebookUrl === url) {
+      if (session.notebookUrl === target) {
         try {
           await session.close();
         } catch (error) {

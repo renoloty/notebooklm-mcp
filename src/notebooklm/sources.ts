@@ -27,8 +27,9 @@
  *      after the dialog closes (up to 90 s — URL crawls are slow).
  */
 
-import type { Page } from "patchright";
+import type { Locator, Page } from "patchright";
 import { Selectors, joinAlt } from "./selectors.js";
+import { dismissWelcomeDialog } from "./dialogs.js";
 import { safeSleep, isRecoverable } from "../browser/watchdog.js";
 import { log } from "../utils/logger.js";
 
@@ -86,9 +87,7 @@ export async function addSource(page: Page, input: AddSourceInput): Promise<AddS
       const currentUrl = page.url();
       const currentUuid = currentUrl.match(/notebook\/([a-f0-9-]+)/)?.[1];
       if (currentUuid && currentUuid !== expectedUuid) {
-        log.error(
-          `  ❌ Notebook redirect: expected ${expectedUuid}, got ${currentUuid}`
-        );
+        log.error(`  ❌ Notebook redirect: expected ${expectedUuid}, got ${currentUuid}`);
         return {
           success: false,
           type: input.type,
@@ -186,6 +185,10 @@ export async function countSources(page: Page): Promise<number> {
  *   3. Last resort: navigate to `?addSource=true`, which auto-opens.
  */
 async function openAddSourceOverlay(page: Page): Promise<void> {
+  // A first-run account gets the welcome/legal modal on top of everything;
+  // its backdrop eats the click on the sidebar button below.
+  await dismissWelcomeDialog(page);
+
   if (await isOverlayVisible(page)) {
     log.info("  ✅ Add-source dialog already open, reusing");
     return;
@@ -193,17 +196,13 @@ async function openAddSourceOverlay(page: Page): Promise<void> {
 
   // Try the sidebar button first — fastest path on a populated notebook.
   try {
-    await page
-      .locator(joinAlt(Selectors.sources.addButton))
-      .first()
-      .click({ timeout: 5_000 });
-    await page
-      .locator(Selectors.sources.overlayPane)
-      .first()
-      .waitFor({ state: "visible", timeout: 8_000 });
+    await page.locator(joinAlt(Selectors.sources.addButton)).first().click({ timeout: 5_000 });
+    await addSourceOverlay(page).waitFor({ state: "visible", timeout: 8_000 });
     return;
   } catch (err) {
-    log.warning(`  ⚠️  Add-source button click failed (${err}), trying ?addSource=true URL fallback`);
+    log.warning(
+      `  ⚠️  Add-source button click failed (${err}), trying ?addSource=true URL fallback`
+    );
   }
 
   // URL fallback — useful when the sidebar button is hidden or covered.
@@ -212,20 +211,32 @@ async function openAddSourceOverlay(page: Page): Promise<void> {
     const u = new URL(url);
     u.searchParams.set("addSource", "true");
     await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 15_000 });
-    await page
-      .locator(Selectors.sources.overlayPane)
-      .first()
-      .waitFor({ state: "visible", timeout: 10_000 });
+    // The welcome modal renders *above* the auto-opened add-source dialog on a
+    // brand-new account, so it has to be cleared again after the reload.
+    await dismissWelcomeDialog(page);
+    await addSourceOverlay(page).waitFor({ state: "visible", timeout: 10_000 });
     return;
   }
 
   throw new Error('Could not open the "Add source" dialog');
 }
 
+/**
+ * Locator for the add-source modal.
+ *
+ * Pinned to `mat-dialog-container:has(add-sources-dialog)` rather than a bare
+ * `[role="dialog"]`: the notebook cover's emoji picker is a permanently-mounted,
+ * invisible `div[role="dialog"]` that sorts *before* real modals, so the old
+ * `[role="dialog"]` + `.first()` pairing resolved to the emoji palette — waits
+ * for `visible` timed out, waits for `hidden` returned instantly, and every
+ * scoped lookup ran against the wrong subtree.
+ */
+function addSourceOverlay(page: Page): Locator {
+  return page.locator(Selectors.sources.addSourceDialog).first();
+}
+
 async function isOverlayVisible(page: Page): Promise<boolean> {
-  return page
-    .locator(Selectors.sources.overlayPane)
-    .first()
+  return addSourceOverlay(page)
     .isVisible({ timeout: 500 })
     .catch(() => false);
 }
@@ -233,7 +244,7 @@ async function isOverlayVisible(page: Page): Promise<boolean> {
 async function pickSourceType(page: Page, type: SourceType): Promise<void> {
   const candidates =
     type === "url" ? Selectors.sources.sourceTypeUrl : Selectors.sources.sourceTypeText;
-  const overlay = page.locator(Selectors.sources.overlayPane).first();
+  const overlay = addSourceOverlay(page);
   for (const sel of candidates) {
     const target = overlay.locator(sel).first();
     if (await target.isVisible({ timeout: 1_000 }).catch(() => false)) {
@@ -247,21 +258,23 @@ async function pickSourceType(page: Page, type: SourceType): Promise<void> {
 }
 
 async function fillSourceContent(page: Page, input: AddSourceInput): Promise<void> {
-  const overlay = page.locator(Selectors.sources.overlayPane).first();
+  const overlay = addSourceOverlay(page);
 
   // Wait for the overlay to actually contain a textarea (the picker swap is
   // animated, so a tight 500 ms wait beats a busy poll).
   await safeSleep(page, 500);
 
+  // Scoped to the dialog so the chat query box — also a `textarea`, and always
+  // present behind the modal — can never be picked up as the target.
   const inputCandidates = [
     Selectors.sources.overlayTextarea,
     Selectors.sources.overlayInput,
-    `${Selectors.sources.overlayPane} textarea:not(.query-box-input):not(.query-box-textarea)`,
+    "textarea:not(.query-box-input):not(.query-box-textarea)",
   ];
 
   let target = null;
   for (const sel of inputCandidates) {
-    const candidate = page.locator(sel).first();
+    const candidate = overlay.locator(sel).first();
     if (await candidate.isVisible({ timeout: 2_000 }).catch(() => false)) {
       target = candidate;
       break;
@@ -284,7 +297,7 @@ async function fillSourceContent(page: Page, input: AddSourceInput): Promise<voi
       'input[placeholder*="title" i]',
       'input[placeholder*="name" i]',
       'input[name="title"]',
-      `${Selectors.sources.overlayPane} input[type="text"]:not([readonly])`,
+      Selectors.sources.overlayInput,
     ];
     for (const sel of titleSelectors) {
       const candidate = overlay.locator(sel).first();
@@ -306,16 +319,23 @@ async function fillSourceContent(page: Page, input: AddSourceInput): Promise<voi
 }
 
 async function confirmInsert(page: Page): Promise<void> {
-  const overlay = page.locator(Selectors.sources.overlayPane).first();
-  for (const sel of Selectors.sources.insertConfirm) {
-    const btn = overlay.locator(sel).first();
-    if (await btn.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      const disabled = await btn.isDisabled().catch(() => false);
-      if (disabled) continue;
-      await btn.click();
-      log.info(`  ✅ submit clicked (selector: ${sel})`);
-      return;
+  const overlay = addSourceOverlay(page);
+
+  // Material keeps the primary button disabled until its validators run, so a
+  // freshly filled field can still read as disabled for a beat. Give it one
+  // short grace period rather than falling through to the Enter-key fallback.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const sel of Selectors.sources.insertConfirm) {
+      const btn = overlay.locator(sel).first();
+      if (await btn.isVisible({ timeout: 1_000 }).catch(() => false)) {
+        const disabled = await btn.isDisabled().catch(() => false);
+        if (disabled) continue;
+        await btn.click();
+        log.info(`  ✅ submit clicked (selector: ${sel})`);
+        return;
+      }
     }
+    if (attempt === 0) await safeSleep(page, 1_000);
   }
   // Fallback: pressing Enter in many flows submits the form.
   log.warning("  ⚠️  No insert button matched, pressing Enter as fallback");
@@ -327,9 +347,7 @@ async function confirmInsert(page: Page): Promise<void> {
  * new sidebar entry once the modal is fully gone, so we *must* wait here.
  */
 async function waitForOverlayToClose(page: Page, timeoutMs: number = 30_000): Promise<void> {
-  await page
-    .locator(Selectors.sources.overlayPane)
-    .first()
+  await addSourceOverlay(page)
     .waitFor({ state: "hidden", timeout: timeoutMs })
     .catch(() => undefined);
 }

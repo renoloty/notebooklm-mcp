@@ -12,6 +12,7 @@
 import envPaths from "env-paths";
 import fs from "fs";
 import path from "path";
+import { normalizeNotebookUrl } from "./notebooklm/urls.js";
 
 // Cross-platform data paths (unified without -nodejs suffix)
 // Linux: ~/.local/share/notebooklm-mcp/
@@ -21,11 +22,14 @@ import path from "path";
 const paths = envPaths("notebooklm-mcp", { suffix: "" });
 
 /**
- * Google NotebookLM Auth URL (used by setup_auth)
- * This is the base Google login URL that redirects to NotebookLM
+ * Google login URL that lands on Gemini Notebook once authenticated
+ * (used by `setup_auth` / `re_auth`).
+ *
+ * The host now lives in `notebooklm/urls.ts` — Google moved the product from
+ * `notebooklm.google.com` to `notebook.google.com` in 2026 and the old host
+ * answers with a 301. Re-exported here for backwards compatibility.
  */
-export const NOTEBOOKLM_AUTH_URL =
-  "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fnotebooklm.google.com%2F&flowName=GlifWebSignIn&flowEntry=ServiceLogin";
+export { NOTEBOOK_AUTH_URL as NOTEBOOKLM_AUTH_URL } from "./notebooklm/urls.js";
 
 export interface Config {
   // NotebookLM - optional, used for legacy default notebook
@@ -194,7 +198,9 @@ function applyEnvOverrides(config: Config): Config {
   return {
     ...config,
     // Override with env vars if present
-    notebookUrl: process.env.NOTEBOOK_URL || config.notebookUrl,
+    // Normalised so a legacy `notebooklm.google.com` value from an existing
+    // deployment lands on the canonical host instead of eating a 301.
+    notebookUrl: normalizeNotebookUrl(process.env.NOTEBOOK_URL || config.notebookUrl),
     headless: parseBoolean(process.env.HEADLESS, config.headless),
     browserTimeout: parseInteger(process.env.BROWSER_TIMEOUT, config.browserTimeout),
     answerTimeoutMs: parseInteger(process.env.ANSWER_TIMEOUT_MS, config.answerTimeoutMs),

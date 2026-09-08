@@ -90,17 +90,36 @@ export async function generateAudioOverview(
     await ensureStudioPanelExpanded(page);
 
     // 4. Trigger generation.
-    if (customPrompt) {
-      await openAudioCustomiseDialog(page);
-      const overlay = page.locator(Selectors.sources.overlayPane).first();
-      const promptField = overlay.locator("textarea, input[type='text']").first();
-      if (await promptField.isVisible({ timeout: 1_500 }).catch(() => false)) {
-        await promptField.fill(customPrompt);
-        await safeSleep(page, 200);
+    //
+    //    Clicking the Studio card no longer starts a render: since 2026 it
+    //    opens a "Customize Audio Overview" (`configurable-form-dialog`) modal
+    //    and nothing happens until its Generate button is pressed. The old
+    //    no-prompt path stopped after the card click and still reported
+    //    "started", leaving the modal open and no audio ever being produced —
+    //    so both paths now go through the dialog.
+    await clickFirstVisible(page, Selectors.studio.audioOverviewButton, "Audio overview entry");
+
+    const customise = page.locator(Selectors.studio.customizeDialog).first();
+    const customiseOpen = await customise.isVisible({ timeout: 5_000 }).catch(() => false);
+
+    if (customiseOpen) {
+      if (customPrompt) {
+        const promptField = customise.locator("textarea, input[type='text']").first();
+        if (await promptField.isVisible({ timeout: 1_500 }).catch(() => false)) {
+          await promptField.fill(customPrompt);
+          await safeSleep(page, 200);
+        } else {
+          log.warning("  ⚠️  Customise dialog has no prompt field — generating with defaults");
+        }
       }
       await clickFirstVisible(page, Selectors.studio.generateButton, "Generate button");
-    } else {
-      await clickFirstVisible(page, Selectors.studio.audioOverviewButton, "Audio overview entry");
+      // The modal closes as the render is queued; if it lingers the click did
+      // not take, and the caller should not be told generation started.
+      await customise
+        .waitFor({ state: "hidden", timeout: 15_000 })
+        .catch(() => log.warning("  ⚠️  Customise dialog still open after Generate"));
+    } else if (customPrompt) {
+      log.warning("  ⚠️  Customise dialog did not open — custom prompt ignored");
     }
 
     log.info("  🎙️  Audio Overview generation triggered");
@@ -127,9 +146,18 @@ export async function generateAudioOverview(
 }
 
 async function waitForAudioReady(page: Page, timeoutMs: number): Promise<AudioGenerationResult> {
-  const tile = page.locator(joinAlt(Selectors.studio.audioPlayer)).first();
-  await tile.waitFor({ state: "visible", timeout: timeoutMs });
-  return { status: "ready" };
+  // Polls `audioIsReady` rather than waiting on the tile selector directly:
+  // the in-progress and finished tiles are the same element, so "visible"
+  // fires while the shimmer is still running.
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await audioIsReady(page)) return { status: "ready" };
+    await safeSleep(page, 5_000);
+  }
+  return {
+    status: "in_progress",
+    message: `Audio Overview was still generating after ${Math.round(timeoutMs / 1000)} s. Poll \`get_audio_status\`.`,
+  };
 }
 
 /**
@@ -159,7 +187,24 @@ export async function getAudioStatusOnPage(page: Page): Promise<AudioGenerationR
   }
 }
 
+/**
+ * `true` only when a *finished* artifact tile is on screen.
+ *
+ * The in-progress and finished tiles are the same `artifact-library-item`
+ * element — generation swaps a shimmer class and the label, it does not mount
+ * a different node. Treating "a tile exists" as "audio is ready" (the pre-2026
+ * behaviour) made `get_audio_status` report `ready` the moment generation
+ * started, so `download_audio` then ran against a placeholder.
+ */
 async function audioIsReady(page: Page): Promise<boolean> {
+  // A tile that is still shimmering means not ready, regardless of what any
+  // other tile in the library is doing.
+  if (await audioGenerationInProgress(page)) return false;
+
+  const tiles = page.locator(Selectors.studio.artifactItem);
+  const count = await tiles.count().catch(() => 0);
+  if (count === 0) return false;
+
   return page
     .locator(joinAlt(Selectors.studio.audioPlayer))
     .first()
@@ -173,10 +218,12 @@ async function audioIsReady(page: Page): Promise<boolean> {
  * works. Coverage spans EN, DE, FR, ES, IT, PT, NL, JA.
  */
 const GENERATION_IN_PROGRESS_PHRASES = [
-  // English
+  // English — "Generating Audio Overview..." / "Come back in a few minutes"
+  // are the two strings the live in-progress tile renders.
   "check back in a few minutes",
   "come back in a few minutes",
   "audio overview is being generated",
+  "generating audio overview",
   "generating your audio",
   // German
   "kommen sie in ein paar minuten wieder",
@@ -204,8 +251,18 @@ const GENERATION_IN_PROGRESS_PHRASES = [
 
 async function audioGenerationInProgress(page: Page): Promise<boolean> {
   try {
+    // Primary, language-free signal: the tile still carries the loading
+    // shimmer. Checked first so a locale outside the phrase list below still
+    // gets a correct answer.
+    const shimmering = await page
+      .locator(joinAlt(Selectors.studio.artifactGenerating))
+      .first()
+      .isVisible({ timeout: 500 })
+      .catch(() => false);
+    if (shimmering) return true;
+
     const studioText = await page
-      .locator(".studio-panel")
+      .locator(Selectors.studio.panel)
       .first()
       .textContent({ timeout: 500 })
       .catch(() => null);
@@ -247,18 +304,9 @@ async function ensureStudioPanelExpanded(page: Page): Promise<void> {
   }
 }
 
-async function openAudioCustomiseDialog(page: Page): Promise<void> {
-  const customiseSelectors = [
-    'button[aria-label*="audio-zusammenfassung anpassen" i]',
-    'button[aria-label*="audio" i][aria-label*="anpassen" i]',
-    'button[aria-label*="customise audio" i]',
-    'button[aria-label*="customize audio" i]',
-    'button[aria-label*="personnaliser" i][aria-label*="audio" i]',
-    'button[aria-label*="personalizar" i][aria-label*="audio" i]',
-    'button[aria-label*="personalizza" i][aria-label*="audio" i]',
-  ];
-  await clickFirstVisible(page, customiseSelectors, "Audio customise button");
-}
+// `openAudioCustomiseDialog()` used to hunt for a separate "Customise audio"
+// control. That control is gone: the Studio card itself opens the customise
+// dialog now, so `generateAudioOverview` goes straight through it.
 
 export interface DownloadAudioResult {
   success: boolean;

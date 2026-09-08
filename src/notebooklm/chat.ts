@@ -15,9 +15,10 @@
  * - issue #28    — sanitisation strips UI-control labels before delivery
  */
 
-import type { Page } from "patchright";
+import type { Locator, Page } from "patchright";
 import { Selectors } from "./selectors.js";
 import { isRecoverable, pageIsAlive, safeSleep } from "../browser/watchdog.js";
+import { lastMatch } from "../utils/locators.js";
 
 /**
  * Loading-state phrases NotebookLM streams into the answer container before
@@ -172,12 +173,27 @@ const RATE_LIMIT_MESSAGES = [
   "1日あたりの上限に達しました",
 ];
 
+/**
+ * Longest a loading indicator ever gets. Beyond this the substring test is
+ * skipped: a real answer that happens to contain "searching", "loading" or
+ * "thinking" would otherwise be rejected on every poll, and `waitForStableAnswer`
+ * would burn its full timeout and return `null` for a response that was
+ * on screen the whole time.
+ */
+const MAX_PLACEHOLDER_LENGTH = 120;
+
 function isPlaceholder(text: string): boolean {
-  const lower = text.toLowerCase();
-  if (PLACEHOLDER_SNIPPETS.some((s) => lower.includes(s))) return true;
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    trimmed.length <= MAX_PLACEHOLDER_LENGTH &&
+    PLACEHOLDER_SNIPPETS.some((s) => lower.includes(s))
+  ) {
+    return true;
+  }
   // Short text ending with "..." is almost certainly a loading indicator;
   // real responses run well past 50 chars.
-  if (text.length < 50 && text.trim().endsWith("...")) return true;
+  if (trimmed.length < 50 && trimmed.endsWith("...")) return true;
   return false;
 }
 
@@ -210,11 +226,22 @@ export interface AskOptions {
  * the new turn isn't confused with prior turns in the same session.
  */
 export async function snapshotPriorAnswers(page: Page): Promise<string[]> {
-  return page
-    .locator(Selectors.chat.answerText)
-    .allInnerTexts()
-    .then((texts) => texts.map((t) => t.trim()).filter(Boolean))
-    .catch(() => []);
+  try {
+    const containers = page.locator(Selectors.chat.answerContainer);
+    const count = await containers.count();
+    const texts: string[] = [];
+    for (let i = 0; i < count; i++) {
+      // Same extraction path as `readLatestAnswer`, so the strings recorded
+      // here actually match the ones the poller compares against. Reading the
+      // raw container here (and the thinking-stripped body there) used to make
+      // every `ignoreTexts` entry a guaranteed miss.
+      const text = await extractAnswerText(containers.nth(i));
+      if (text) texts.push(text);
+    }
+    return texts;
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -305,19 +332,99 @@ export async function waitForStableAnswer(
 
 /**
  * Read the latest answer container's text and strip UI-control leakage.
- * Uses `:last-child` so we always target the most recent turn.
+ *
+ * Uses `lastMatch` rather than `.last()`: patchright's `.last()` resolves to
+ * nothing when the locator matches exactly one element, which is precisely the
+ * state on the first question of a session. See `utils/locators.ts`.
  */
 async function readLatestAnswer(page: Page): Promise<string | null> {
   try {
-    const raw = await page
-      .locator(Selectors.chat.latestAnswerText)
-      .last()
-      .innerText({ timeout: 2_000 });
-    const cleaned = sanitizeAnswer(raw);
-    return cleaned.length > 0 ? cleaned : null;
+    const container = await lastMatch(page.locator(Selectors.chat.answerContainer));
+    if (!container) return null;
+    return await extractAnswerText(container);
   } catch {
     return null;
   }
+}
+
+/**
+ * Pull the prose out of one answer container, leaving the reasoning block
+ * behind.
+ *
+ * Since 2026 the model streams a visible chain-of-thought into the same
+ * `.message-text-content` node as the answer:
+ *
+ * ```
+ * Thoughts
+ * Defining MCP...
+ * Clarifying MCP Definition...
+ * expand_moreThe Model Context Protocol (MCP) is an open standard…
+ * ```
+ *
+ * Reading the container wholesale returns all of that. The reasoning lives in
+ * its own `thinking-chain-view` sibling, so we read the answer element(s)
+ * directly and only fall back to the container — minus the reasoning text —
+ * when the layout does not match.
+ */
+async function extractAnswerText(container: Locator): Promise<string | null> {
+  const body = container.locator(Selectors.chat.answerBody);
+
+  // Preferred path: read the answer element(s) only. A long answer can render
+  // as several structural elements, so join rather than taking the first.
+  const bodyTexts = await body.allInnerTexts().catch(() => [] as string[]);
+  const joined = bodyTexts
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .join("\n");
+  if (joined) {
+    const cleaned = sanitizeAnswer(joined);
+    if (cleaned.length > 0) return cleaned;
+  }
+
+  // Fallback for layouts without the 2026 answer element: take the whole
+  // container and subtract the reasoning block's text if one is present.
+  let raw: string;
+  try {
+    const textNode = await lastMatch(container.locator(Selectors.chat.answerTextInContainer));
+    if (!textNode) return null;
+    raw = await textNode.innerText({ timeout: 2_000 });
+  } catch {
+    return null;
+  }
+
+  const thinking = await container
+    .locator(Selectors.chat.thinkingBlock)
+    .first()
+    .innerText({ timeout: 500 })
+    .catch(() => "");
+
+  const withoutThinking = thinking.trim() ? stripLeadingBlock(raw, thinking) : raw;
+  const cleaned = sanitizeAnswer(withoutThinking);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/**
+ * Remove `block` from the front of `text` when it is there.
+ *
+ * `innerText` collapses whitespace differently inside and outside the nested
+ * element, so the comparison is done on whitespace-normalised copies and the
+ * cut is applied by walking the original string.
+ */
+function stripLeadingBlock(text: string, block: string): string {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const normBlock = norm(block);
+  if (!normBlock) return text;
+  if (!norm(text).startsWith(normBlock)) return text;
+
+  // Walk the original text until we've consumed as many non-space characters
+  // as the block contains, then drop everything up to that point.
+  const targetChars = normBlock.replace(/ /g, "").length;
+  let seen = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (!/\s/.test(text[i])) seen++;
+    if (seen >= targetChars) return text.slice(i + 1);
+  }
+  return "";
 }
 
 /**
@@ -334,10 +441,17 @@ export function sanitizeAnswer(text: string): string {
 
   const kept: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    let line = lines[i];
     if (!line) continue;
 
     if (Selectors.uiControlLabels.has(line)) continue;
+
+    // Icon glyphs are text nodes, so a collapsed layout can weld one onto the
+    // following sentence with no separator ("expand_moreThe Model Context…").
+    // Only strip when the label is followed by something that cannot continue
+    // a snake_case identifier, so prose is never mangled.
+    line = stripGluedControlLabel(line);
+    if (!line) continue;
 
     // Drop lone digits or punctuation flanking a UI-control label
     // (typical citation-marker leak: ["1", "more_vert"]).
@@ -355,4 +469,26 @@ export function sanitizeAnswer(text: string): string {
     .join("\n")
     .replace(/[ \t]+([.,;:!?])/g, "$1")
     .trim();
+}
+
+/**
+ * Drop a Material-icon label welded to the start of a line.
+ *
+ * Stripping only happens when the label is *welded* to what follows — the next
+ * character continues a word but cannot continue the identifier (an uppercase
+ * letter or a digit). Two cases are deliberately left alone:
+ *
+ *   - `"share this document…"` — followed by whitespace, so this is ordinary
+ *     prose that happens to start with the same word, not a leaked glyph.
+ *   - `"expand_more_button_label"` — followed by `_`/lowercase, so the label is
+ *     just a prefix of a longer identifier.
+ */
+function stripGluedControlLabel(line: string): string {
+  for (const label of Selectors.uiControlLabels) {
+    if (!line.startsWith(label) || line.length === label.length) continue;
+    const next = line[label.length];
+    if (/[a-z_\s]/.test(next)) continue;
+    return line.slice(label.length).trim();
+  }
+  return line;
 }

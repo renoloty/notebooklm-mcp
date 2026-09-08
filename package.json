@@ -1,7 +1,7 @@
 {
   "name": "notebooklm-mcp",
-  "version": "2.0.0",
-  "description": "MCP server for Google NotebookLM — chat, source ingestion, audio overviews, citations, stdio + Streamable-HTTP transports.",
+  "version": "2.1.0",
+  "description": "MCP server for Google's Gemini Notebook (formerly NotebookLM) - chat, source ingestion, audio overviews, citations, stdio + Streamable-HTTP transports.",
   "type": "module",
   "bin": {
     "notebooklm-mcp": "dist/index.js"
@@ -12,12 +12,12 @@
     "watch": "tsc --watch",
     "dev": "tsx watch src/index.ts",
     "prepare": "npm run build",
-    "test": "tsx src/index.ts",
+    "test": "tsx tests/selectors.test.ts",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
-    "check": "npm run format:check && npm run lint && npm run build"
+    "check": "npm run format:check && npm run lint && npm run build && npm test"
   },
   "keywords": [
     "mcp",
