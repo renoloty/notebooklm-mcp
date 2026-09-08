@@ -5,7 +5,9 @@
 [![MCP](https://img.shields.io/badge/MCP-Streamable--HTTP-green.svg)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-MCP server for Google NotebookLM. It drives a real Chrome via Patchright (stealth + persistent fingerprint) so an agent can chat against a notebook, ingest sources, generate audio overviews, and read DOM-level citations. Two transports are supported: `stdio` (default) and Streamable-HTTP. v2.0.0 is the current line; v1 is no longer supported.
+MCP server for Google's notebook product — rebranded **Gemini Notebook** in 2026 and served from `notebook.google.com` (the old `notebooklm.google.com` now 301-redirects there). It drives a real Chrome via Patchright (stealth + persistent fingerprint) so an agent can chat against a notebook, ingest sources, generate audio overviews, and read DOM-level citations. Two transports are supported: `stdio` (default) and Streamable-HTTP. v2.1.0 is the current line; v1 is no longer supported.
+
+> **Upgrading from 2.0.x:** 2.0.x predates the domain move and cannot sign in — the login check waited for a host that no longer serves the app. Saved notebook URLs on the old host are migrated automatically; no action needed.
 
 - [Requirements](#requirements--platform-support)
 - [Install](#install)
@@ -368,9 +370,10 @@ All configuration is via environment variables and tool parameters. There is no 
 ```bash
 npm run build      # tsc + chmod +x dist/index.js
 npm run dev        # tsx watch src/index.ts
+npm test           # selector + URL regression suite
 npm run lint       # eslint src
 npm run format     # prettier --write src
-npm run check      # format:check + lint + build
+npm run check      # format:check + lint + build + test
 ```
 
 The build is type-safe with no `any` casts; DOM types are enabled for in-page evaluations.
@@ -381,10 +384,41 @@ Source layout:
 - `src/transport/http.ts` — Streamable-HTTP transport
 - `src/tools/definitions/` — tool schemas
 - `src/tools/handlers.ts` — tool implementations
-- `src/notebooklm/` — selectors and DOM logic
+- `src/notebooklm/` — selectors, URL handling, dialogs, DOM logic
 - `src/auth/` — auth manager + account switcher
 - `src/library/` — local notebook library
-- `src/utils/` — settings, logger, disclaimer, cli-handler
+- `src/utils/` — settings, logger, locators, disclaimer, cli-handler
+- `tests/` — regression suite + DOM fixture
+
+### Tests
+
+`npm test` runs the selector registry against `tests/fixtures/notebook-page.html`,
+a fixture that reproduces the live Gemini Notebook DOM. It needs a local
+Chrome/Chromium and nothing else — no network, no Google account, no credentials.
+
+The fixture exists because a browser console cannot evaluate Playwright's
+selector syntax (`:has-text()`, `:text-is()`), so spot-checking selectors on the
+live site does not actually exercise them. Each known breakage is asserted from
+both sides: the current selector resolves to the right element, **and** the
+selector it replaced resolves to nothing — which is what stops a dead anchor
+from being quietly reinstated.
+
+### When Google changes the UI
+
+Selectors live in one file, `src/notebooklm/selectors.ts`, ordered by how
+durable the anchor is: Angular component tags first, then component classes,
+then Material icon glyph names (identical in every locale), and only then
+locale-bound text. The notebook host lives in `src/notebooklm/urls.ts`.
+
+Two traps documented there are worth knowing before editing:
+
+- `[role="dialog"]` is **not** safe on its own. The notebook cover mounts an
+  emoji picker whose palette is a permanently-present, invisible `0x0`
+  `div[role="dialog"]` that precedes real modals in document order. Anchor
+  dialogs on `mat-dialog-container`.
+- An `artifact-library-item` existing does **not** mean the artifact is ready.
+  The generating and finished tiles are the same element; only the
+  `.shimmer-blue` class and the label change.
 
 ---
 

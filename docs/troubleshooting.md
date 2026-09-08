@@ -1,6 +1,6 @@
 # Troubleshooting
 
-A symptom → fix matrix for v2.0.0. For the full env-var inventory, see [`configuration.md`](./configuration.md).
+A symptom → fix matrix for v2.1.0. For the full env-var inventory, see [`configuration.md`](./configuration.md).
 
 ## Chrome fails to launch (macOS Tahoe / Windows exit 21)
 
@@ -17,6 +17,69 @@ NOTEBOOKLM_BROWSER_CHANNEL=chromium npx notebooklm-mcp@latest
 ```
 
 The fallback is also auto-applied when launch errors match the known patterns, but setting the env var explicitly makes the choice deterministic.
+
+## Stuck on 2.0.x after the Gemini Notebook rename
+
+Symptom: `setup_auth` opens the browser, you sign in successfully, and the tool
+still reports a login failure after its full timeout. `get_health` keeps saying
+`authenticated: false`. Every other tool then fails too.
+
+Cause: Google renamed NotebookLM to **Gemini Notebook** and moved it to
+`notebook.google.com`. The old host now returns a 301:
+
+```bash
+curl -I https://notebooklm.google.com/
+# HTTP/2 301
+# location: https://notebook.google.com/
+```
+
+2.0.x confirmed login by testing `url.startsWith("https://notebooklm.google.com/")`.
+After the redirect the browser is on the new host, so that test could never pass
+— on a session that had, in fact, signed in.
+
+Fix: upgrade to 2.1.0 or later. Saved notebook URLs on the old host are
+normalised automatically and cookies are unaffected (they were always scoped to
+`google.com`), so there is nothing to migrate by hand.
+
+## First tool call on a brand-new Google account hangs
+
+Symptom: On an account that has never opened the product, every tool times out
+looking for a selector that is plainly visible in a headed browser.
+
+Cause: A first-run account gets a blocking "👋 Welcome to Gemini Notebook"
+dialog. It is a normal Material modal, so its backdrop swallows every click
+underneath — but nothing in the DOM *looks* wrong, which is why the failures
+read as ordinary selector timeouts.
+
+Fix: 2.1.0+ dismisses it automatically on session start. On older versions, open
+the notebook once in a normal browser with that account and click through the
+dialog. (The dialog also carries a marketing opt-in checkbox; the server
+acknowledges the notice and leaves that box unchecked.)
+
+## `get_audio_status` says `ready` but `download_audio` fails
+
+Symptom: `generate_audio` returns `started`, `get_audio_status` immediately
+reports `ready`, and `download_audio` then errors or saves nothing.
+
+Cause: In 2.0.x readiness was "an `artifact-library-item` exists". The
+in-progress and finished tiles are the *same* element — generation swaps a
+shimmer class and the label, it does not mount a different node — so the check
+passed the instant generation began.
+
+Fix: upgrade to 2.1.0+, which treats the absence of the `.shimmer-blue` loading
+class as the readiness signal. Audio genuinely takes 2–10 minutes (occasionally
+longer on free-tier accounts); keep polling `get_audio_status` every ~30 s.
+
+## `generate_audio` returns `started` but no audio ever appears
+
+Symptom: The call succeeds, the Studio panel shows a "Customize Audio Overview"
+dialog left open, and no render is ever queued.
+
+Cause: Clicking the Studio card no longer starts a render — it opens the
+customise dialog, and generation begins only when that dialog's **Generate**
+button is pressed. 2.0.x pressed Generate only when `custom_prompt` was set.
+
+Fix: upgrade to 2.1.0+. Both paths now go through the dialog.
 
 ## `ask_question` times out
 

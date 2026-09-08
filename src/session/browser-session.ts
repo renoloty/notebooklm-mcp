@@ -19,6 +19,8 @@ import type { AuthManager } from "../auth/auth-manager.js";
 import { humanType, randomDelay } from "../utils/stealth-utils.js";
 import { snapshotAllResponses } from "../utils/page-utils.js";
 import { waitForStableAnswer, snapshotPriorAnswers } from "../notebooklm/chat.js";
+import { dismissWelcomeDialog } from "../notebooklm/dialogs.js";
+import { isSameNotebookOrigin, normalizeNotebookUrl } from "../notebooklm/urls.js";
 import {
   extractCitations as extractCitationsFromPage,
   type SourceFormat,
@@ -64,7 +66,11 @@ export class BrowserSession {
     this.sessionId = sessionId;
     this.sharedContextManager = sharedContextManager;
     this.authManager = authManager;
-    this.notebookUrl = notebookUrl;
+    // Rewritten onto the canonical host so a saved `notebooklm.google.com`
+    // entry does not cost a 301 on every navigation — and, more importantly,
+    // so origin-sensitive code (sessionStorage restore, recovery re-navigation)
+    // compares against the host the browser actually ends up on.
+    this.notebookUrl = normalizeNotebookUrl(notebookUrl);
     this.createdAt = Date.now();
     this.lastActivity = Date.now();
     this.messageCount = 0;
@@ -173,6 +179,11 @@ export class BrowserSession {
     if (!this.page) {
       throw new Error("Page not initialized");
     }
+
+    // A first-run account lands on the welcome / legal-notice modal. The chat
+    // input is behind its backdrop, so every later click would be swallowed —
+    // clear it before we declare the interface ready.
+    await dismissWelcomeDialog(this.page);
 
     try {
       // PRIMARY: Exact Python selector - textarea.query-box-input
@@ -318,8 +329,11 @@ export class BrowserSession {
         return false;
       }
 
-      const currentOrigin = this.getOriginFromUrl(this.page.url());
-      if (currentOrigin !== targetOrigin) {
+      // Compared through `isSameNotebookOrigin` rather than by string equality:
+      // a library entry still pointing at `notebook.google.com` lands the page
+      // on `notebook.google.com` after the 301, and a strict comparison then
+      // silently skipped the restore on every single session.
+      if (!isSameNotebookOrigin(this.page.url(), targetOrigin)) {
         return false;
       }
 

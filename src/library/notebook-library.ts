@@ -9,6 +9,7 @@
 import fs from "fs";
 import path from "path";
 import { CONFIG } from "../config.js";
+import { normalizeNotebookUrl } from "../notebooklm/urls.js";
 import { log } from "../utils/logger.js";
 import type {
   NotebookEntry,
@@ -73,7 +74,7 @@ export class NotebookLibrary {
       const id = this.generateId(CONFIG.notebookDescription);
       notebooks.push({
         id,
-        url: CONFIG.notebookUrl,
+        url: normalizeNotebookUrl(CONFIG.notebookUrl),
         name: CONFIG.notebookDescription.substring(0, 50), // First 50 chars as name
         description: CONFIG.notebookDescription,
         topics: CONFIG.notebookTopics,
@@ -145,7 +146,7 @@ export class NotebookLibrary {
     // Create entry
     const notebook: NotebookEntry = {
       id,
-      url: input.url,
+      url: normalizeNotebookUrl(input.url),
       name: input.name,
       description: input.description,
       topics: input.topics,
@@ -248,7 +249,7 @@ export class NotebookLibrary {
       ...(input.content_types && { content_types: input.content_types }),
       ...(input.use_cases && { use_cases: input.use_cases }),
       ...(input.tags && { tags: input.tags }),
-      ...(input.url && { url: input.url }),
+      ...(input.url && { url: normalizeNotebookUrl(input.url) }),
     };
 
     this.saveLibrary(updated);

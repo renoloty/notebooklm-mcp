@@ -1,30 +1,45 @@
 /**
- * Central selector registry for the NotebookLM web UI.
+ * Central selector registry for the Gemini Notebook web UI
+ * (formerly NotebookLM — see `urls.ts` for the 2026 domain move).
  *
  * # Multilingual strategy
  *
- * Google ships NotebookLM in dozens of locales. Anchor priority:
+ * Google ships the product in dozens of locales. Anchor priority:
  *
- *   1. **Class names** (`.add-source-button`, `.single-source-container`,
- *      `.submit-button`, `.create-artifact-button-container`, …) — these
- *      are Angular component selectors and identical in every locale.
+ *   1. **Angular component tags** (`add-sources-dialog`, `artifact-library-item`,
+ *      `thinking-chain-view`, `project-button`, …) — the most stable anchor
+ *      available and identical in every locale. Preferred since the 2026
+ *      rewrite, which moved most semantic classes onto custom elements.
  *
- *   2. **Material-Symbols icon names** (`audio_magic_eraser`, `content_paste`,
- *      `link`, `upload`, `download`, …) — Google ships them as the literal
- *      text node of `<mat-icon>` in every locale, so they are 100% language-
+ *   2. **Class names** (`.single-source-container`, `.submit-button`,
+ *      `.create-artifact-button-container`, …) — Angular component classes,
+ *      also locale-independent.
+ *
+ *   3. **Material-Symbols icon names** (`audio_magic_eraser`, `content_paste`,
+ *      `link`, `upload`, `sync`, …) — Google ships them as the literal text
+ *      node of `<mat-icon>` in every locale, so they are 100 % language-
  *      agnostic. Most stable anchor for icon-driven controls.
  *
- *   3. **`role="dialog"`, `role="button"`** — set synchronously by Angular,
- *      no animation race.
+ *   4. **Locale-bound aria-labels and visible text** — last resort. Each list
+ *      below covers the eight major locales: EN, DE, FR, ES, PT, IT, NL, JA.
+ *      Adding more is mechanical; nothing breaks if a locale is missing
+ *      because the tag/class/icon anchors fire first.
  *
- *   4. **Locale-bound aria-labels and visible text** — last resort. Each
- *      list below covers the eight major NotebookLM locales:
- *      EN, DE, FR, ES, PT, IT, NL, JA. Adding more is mechanical; nothing
- *      breaks if a locale is missing because the class/icon anchors fire
- *      first.
+ * # 2026 layout changes verified against the live DOM
  *
- * Last verified: 2026-05 against the live notebooklm.google.com layout
- * (DE, EN locales).
+ * - Buttons are wrapped in `nb-button` / `nb-icon-button` custom elements and
+ *   the semantic class now sits on the **wrapper**, not the inner `<button>`.
+ *   `button.add-source-button` therefore matches nothing; `.add-source-button
+ *   button` is the correct anchor.
+ * - `[role="dialog"]` alone is no longer safe: the notebook cover's emoji
+ *   picker mounts a permanently-present, 0×0, invisible `div[role="dialog"]`
+ *   that precedes real modals in document order. Anchoring on
+ *   `mat-dialog-container` is required — see `overlayPane`.
+ * - Answers now embed a `thinking-chain-view` reasoning block ahead of the
+ *   prose. `answerBody` targets the prose only.
+ *
+ * Last verified: 2026-09 against the live notebook.google.com layout
+ * (EN locale, signed-in account).
  */
 
 export const Selectors = {
@@ -32,6 +47,33 @@ export const Selectors = {
     answerContainer: ".to-user-container",
     answerText: ".to-user-container .message-text-content",
     latestAnswerText: ".to-user-container:last-child .message-text-content",
+    /**
+     * Same node as `answerText`, but **relative** to an `answerContainer`
+     * locator. Scoping the absolute form inside a container searches for a
+     * *nested* `.to-user-container`, which never exists — the lookup just
+     * burns its timeout and yields nothing.
+     */
+    answerTextInContainer: ".message-text-content",
+    /**
+     * The answer prose only.
+     *
+     * Since 2026 the model streams a visible chain-of-thought block into the
+     * same `.message-text-content` node:
+     *
+     * ```
+     * div.message-text-content
+     *   labs-tailwind-doc-viewer > element-list-renderer
+     *     thinking-chain-view                       ← "Thoughts / Defining X… expand_more"
+     *     labs-tailwind-structural-element-view-v2  ← the actual answer
+     * ```
+     *
+     * Reading the container wholesale prepends reasoning noise (and a glued-on
+     * `expand_more` icon label) to every response, so extraction targets this
+     * element and falls back to the container only when it is absent.
+     */
+    answerBody: "labs-tailwind-structural-element-view-v2",
+    /** Reasoning block to strip from extracted answers. */
+    thinkingBlock: "thinking-chain-view",
     /**
      * Chat textarea. The class is shared across locales; aria-labels are a
      * fallback for older builds where the class was different.
@@ -68,7 +110,62 @@ export const Selectors = {
   },
 
   /**
-   * NotebookLM removed tabs in favour of a three-pane sidebar (2026 layout).
+   * Blocking modals that are not part of any workflow but sit on top of the
+   * app until dismissed. A fresh Google account always gets the welcome /
+   * legal-notice dialog on first notebook open, which silently breaks every
+   * click-driven flow (the Material backdrop swallows the click).
+   */
+  dialogs: {
+    /** First-run "Welcome to Gemini Notebook" legal notice. */
+    welcome: ["legal-notice-dialog", "mat-dialog-container:has(legal-notice-dialog)"],
+    /**
+     * Its acknowledge button. Text-anchored because the dialog ships no
+     * stable class on the action; covers the eight major locales.
+     */
+    welcomeDismiss: [
+      'legal-notice-dialog button:has-text("Okay")',
+      'legal-notice-dialog button:has-text("OK")',
+      'legal-notice-dialog button:has-text("Got it")',
+      'legal-notice-dialog button:has-text("Verstanden")',
+      'legal-notice-dialog button:has-text("Ok, verstanden")',
+      'legal-notice-dialog button:has-text("J\'ai compris")',
+      'legal-notice-dialog button:has-text("D\'accord")',
+      'legal-notice-dialog button:has-text("Entendido")',
+      'legal-notice-dialog button:has-text("De acuerdo")',
+      'legal-notice-dialog button:has-text("Ho capito")',
+      'legal-notice-dialog button:has-text("Entendi")',
+      'legal-notice-dialog button:has-text("Begrepen")',
+      'legal-notice-dialog button:has-text("OK")',
+      'legal-notice-dialog button:has-text("確認")',
+      "legal-notice-dialog mat-dialog-actions button",
+    ],
+    /**
+     * Marketing opt-in checkbox inside the welcome dialog. Listed so the
+     * dismissal helper can assert it is left **unchecked** — we acknowledge
+     * the notice, we do not opt the user into email on their behalf.
+     */
+    welcomeMarketingOptIn: 'legal-notice-dialog input[type="checkbox"]',
+    /**
+     * Generic close affordance on a Material dialog. Written **relative** to
+     * the dialog root so callers can scope it with
+     * `page.locator(overlayPane).locator(sel)`.
+     */
+    closeButton: [
+      'button[aria-label="Close"]',
+      'button[aria-label="Close dialog"]',
+      'button[aria-label*="close" i]',
+      'button[aria-label*="schließen" i]',
+      'button[aria-label*="fermer" i]',
+      'button[aria-label*="cerrar" i]',
+      'button[aria-label*="chiudi" i]',
+      'button[aria-label*="fechar" i]',
+      'button[aria-label*="sluiten" i]',
+      'button[aria-label*="閉じる" i]',
+    ],
+  },
+
+  /**
+   * The product removed tabs in favour of a three-pane sidebar.
    * These selectors are kept only for the rare legacy layouts.
    */
   tabs: {
@@ -118,12 +215,18 @@ export const Selectors = {
      */
     sourceCountIndicator: ".cover-subtitle-source-count",
     /**
-     * Sidebar "Add source" button. Class `.add-source-button` is language-
-     * agnostic; aria-labels listed for older builds without the class.
+     * Sidebar "Add source" button.
+     *
+     * 2026: the control is `nb-button.add-source-button > button`. The class
+     * moved to the `nb-button` wrapper, so the pre-2026 `button.add-source-button`
+     * matches nothing — the descendant form below covers both layouts.
      */
     addButton: [
+      ".add-source-button button",
+      "nb-button.add-source-button button",
       "button.add-source-button",
       'button[aria-label="Add source"]',
+      '[aria-label="Add source"] button',
       'button[aria-label*="add source" i]',
       'button[aria-label*="quelle hinzu" i]',
       'button[aria-label*="ajouter une source" i]',
@@ -135,23 +238,44 @@ export const Selectors = {
       'button[aria-label*="ソースを追加" i]',
     ],
     /**
-     * Real Material modal. `[role="dialog"]` is set by Angular synchronously
-     * the moment the modal mounts — race-free against the `.mdc-dialog--open`
-     * animation class and resistant to Material-UI version bumps. Avoid
-     * `.cdk-overlay-pane` (matches every dropdown / emoji picker / menu).
+     * Real Material modal.
+     *
+     * CRITICAL: do **not** loosen this to a bare `[role="dialog"]`. The
+     * notebook cover mounts `xap-emoji-picker`, whose emoji palette is a
+     * permanently-present `div[role="dialog"]` — 0×0, invisible, and *earlier
+     * in document order* than any real modal. A bare `[role="dialog"]` with
+     * `.first()` therefore resolves to the emoji palette: waits for
+     * `state: "visible"` time out, waits for `state: "hidden"` return
+     * instantly, and every overlay-scoped lookup searches the wrong subtree.
+     * `mat-dialog-container` is mounted by Angular Material only for genuine
+     * modals, and (like `[role="dialog"]`) is set synchronously on mount, so
+     * it stays race-free against the `.mdc-dialog--open` animation class.
      */
-    overlayPane: '[role="dialog"]',
-    overlayInput: '[role="dialog"] input[type="text"]:not([readonly])',
-    overlayTextarea: '[role="dialog"] textarea',
+    overlayPane: "mat-dialog-container",
+    /** The add-source modal specifically, when we need to disambiguate. */
+    addSourceDialog: "mat-dialog-container:has(add-sources-dialog)",
+    /**
+     * URL / text entry field inside the add-source modal.
+     *
+     * 2026: the URL step renders a **textarea** inside
+     * `mat-form-field.urls-input` (it accepts several newline-separated URLs).
+     * The pre-2026 `input[type="text"]` no longer exists in that step.
+     *
+     * Written **relative** to the dialog root.
+     */
+    overlayTextarea: ".urls-input textarea, textarea",
+    overlayInput: 'input[type="text"]:not([readonly])',
     /**
      * Source-type buttons in the Add-source overlay. Google ships them
      * *without* aria-labels — the only stable, language-agnostic anchor is
      * the Material-Symbols icon name baked into a `<mat-icon>` text node.
      */
     sourceTypeUrl: [
-      // Icon-anchored (language-free) — primary path.
-      "button.drop-zone-icon-button:has(mat-icon.youtube-icon)",
+      // Icon-anchored (language-free) — primary path. The "Websites" tile
+      // carries both a `link` and a `video_youtube` glyph.
       'button.drop-zone-icon-button:has(mat-icon:text-is("link"))',
+      "button.drop-zone-icon-button:has(mat-icon.youtube-icon)",
+      'button.drop-zone-icon-button:has(mat-icon:text-is("video_youtube"))',
       // Visible-text fallbacks for the eight major locales.
       'button.drop-zone-icon-button:has-text("Websites")',
       'button.drop-zone-icon-button:has-text("Website")',
@@ -160,8 +284,6 @@ export const Selectors = {
       'button.drop-zone-icon-button:has-text("Sito web")',
       'button.drop-zone-icon-button:has-text("Sites")',
       'button.drop-zone-icon-button:has-text("ウェブサイト")',
-      'span:has-text("Website")',
-      'span:has-text("URL")',
     ],
     sourceTypeText: [
       // Icon-anchored (language-free) — primary path.
@@ -175,19 +297,17 @@ export const Selectors = {
       'button.drop-zone-icon-button:has-text("Testo copiato")',
       'button.drop-zone-icon-button:has-text("Gekopieerde tekst")',
       'button.drop-zone-icon-button:has-text("コピーしたテキスト")',
-      'span:has-text("Copied text")',
-      'span:has-text("Pasted text")',
-      '[data-type="text"]',
     ],
     sourceTypeYoutube: [
-      "button.drop-zone-icon-button mat-icon.youtube-icon",
       'button.drop-zone-icon-button:has(mat-icon:text-is("video_youtube"))',
+      "button.drop-zone-icon-button:has(mat-icon.youtube-icon)",
     ],
     sourceTypeFile: [
       'input[type="file"]',
       'button.drop-zone-icon-button:has(mat-icon:text-is("upload"))',
       'button.drop-zone-icon-button:has-text("Dateien hochladen")',
       'button.drop-zone-icon-button:has-text("Upload sources")',
+      'button.drop-zone-icon-button:has-text("Upload files")',
       'button.drop-zone-icon-button:has-text("Importer")',
       'button.drop-zone-icon-button:has-text("Subir")',
       'button.drop-zone-icon-button:has-text("Carica")',
@@ -195,28 +315,29 @@ export const Selectors = {
       'button.drop-zone-icon-button:has-text("アップロード")',
     ],
     /**
-     * Primary submit button in the add-source dialog. Material's
-     * `.mdc-button--raised` class is the most stable anchor; per-locale
-     * visible-text variants are fallbacks for older builds.
+     * Primary submit button in the add-source dialog.
+     *
+     * 2026 ships it as `.mdc-button--unelevated` / `.mat-mdc-unelevated-button`;
+     * older builds used `--raised`. Both class anchors are listed ahead of the
+     * per-locale visible-text variants. The button starts **disabled** and
+     * only enables once the field validates, so callers must re-check
+     * `isDisabled()` rather than clicking the first match blindly.
+     *
+     * Written **relative** to the dialog root — callers scope these with
+     * `page.locator(overlayPane).locator(sel)`.
      */
     insertConfirm: [
       // Class-anchored (language-free).
-      'button.mdc-button--raised:has-text("Insert")',
-      'button.mat-flat-button:has-text("Insert")',
-      'button[color="primary"]:has-text("Insert")',
+      "button.mat-mdc-unelevated-button:not([disabled])",
+      "button.mdc-button--unelevated:not([disabled])",
+      "button.mdc-button--raised:not([disabled])",
+      "button.mat-flat-button:not([disabled])",
       // Visible-text fallbacks for major locales.
-      'button.mdc-button--raised:has-text("Einfügen")',
-      'button.mdc-button--raised:has-text("Hinzufügen")',
-      'button.mdc-button--raised:has-text("Ajouter")',
-      'button.mdc-button--raised:has-text("Insertar")',
-      'button.mdc-button--raised:has-text("Inserisci")',
-      'button.mdc-button--raised:has-text("Invoegen")',
-      'button.mdc-button--raised:has-text("挿入")',
       'button:has-text("Insert")',
       'button:has-text("Einfügen")',
       'button:has-text("Hinzufügen")',
-      'button:has-text("Ajouter")',
       'button:has-text("Insérer")',
+      'button:has-text("Ajouter")',
       'button:has-text("Insertar")',
       'button:has-text("Añadir")',
       'button:has-text("Agregar")',
@@ -231,30 +352,35 @@ export const Selectors = {
       'button:has-text("Add")',
       'button:has-text("Submit")',
       'button[type="submit"]',
-      '[role="dialog"] .mdc-dialog__actions button:not(:has-text("Cancel")):not(:has-text("Close")):not(:has-text("Schließen")):not(:has-text("Annuler")):not(:has-text("Cancelar")):not(:has-text("Annulla")):not(:has-text("Annuleren")):not(:has-text("キャンセル"))',
     ],
   },
 
   studio: {
+    /** The Studio pane itself — tag and class both exist in the 2026 layout. */
+    panel: "studio-panel, .studio-panel",
     /**
-     * "Audio Overview" entry control. As of the 2026-05 Studio layout this
-     * is a `<div role="button">` with a Material-Symbols `audio_magic_eraser`
-     * icon, NOT a real `<button>`. Icon-anchored selectors fire first.
+     * "Audio Overview" entry control. It is a `<div role="button">` inside a
+     * `basic-create-artifact-button`, NOT a real `<button>`.
+     *
+     * The Studio now offers nine artifact types (Audio Overview, Slide Deck,
+     * Video Overview, Mind Map, Reports, Flashcards, Quiz, Infographic, Data
+     * Table), so a generic `.create-artifact-button-container` match is
+     * ambiguous — every selector below pins the Audio one specifically via
+     * its `audio_magic_eraser` glyph or its localised label.
      */
     audioOverviewButton: [
       // Icon-anchored (language-free) — primary path.
       '.create-artifact-button-container:has(mat-icon:text-is("audio_magic_eraser"))',
       '[role="button"]:has(mat-icon:text-is("audio_magic_eraser"))',
       // Locale-bound aria-labels for the eight major locales.
-      '[role="button"][aria-label*="audio-zusammenfassung" i]',
       '[role="button"][aria-label*="audio overview" i]',
+      '[role="button"][aria-label*="audio-zusammenfassung" i]',
       '[role="button"][aria-label*="aperçu audio" i]',
       '[role="button"][aria-label*="resumen de audio" i]',
       '[role="button"][aria-label*="panoramica audio" i]',
       '[role="button"][aria-label*="visão geral de áudio" i]',
       '[role="button"][aria-label*="audio-overzicht" i]',
       '[role="button"][aria-label*="音声の概要" i]',
-      '[role="button"][aria-label*="audio" i]',
       // Legacy <button> fallbacks for older builds.
       'button:has(mat-icon:text-is("audio_magic_eraser"))',
       'button[aria-label*="audio overview" i]',
@@ -262,19 +388,101 @@ export const Selectors = {
       'button[aria-label*="podcast" i]',
     ],
     /**
-     * Generate / Generieren / Générer trigger inside the customise dialog.
-     * Visible-text varies by locale.
+     * Clicking the Audio Overview card opens a `configurable-form-dialog`
+     * ("Customize Audio Overview") — generation only starts after its
+     * Generate button is pressed.
      */
+    customizeDialog: "mat-dialog-container:has(configurable-form-dialog)",
     generateButton: [
+      'mat-dialog-container button:has-text("Generate")',
+      'mat-dialog-container button:has-text("Generieren")',
+      'mat-dialog-container button:has-text("Générer")',
+      'mat-dialog-container button:has-text("Generar")',
+      'mat-dialog-container button:has-text("Genera")',
+      'mat-dialog-container button:has-text("Gerar")',
+      'mat-dialog-container button:has-text("Genereren")',
+      'mat-dialog-container button:has-text("生成")',
       'button:has-text("Generate")',
       'button:has-text("Generieren")',
       'button:has-text("Générer")',
-      'button:has-text("Generer")',
       'button:has-text("Generar")',
       'button:has-text("Genera")',
       'button:has-text("Gerar")',
       'button:has-text("Genereren")',
       'button:has-text("生成")',
+    ],
+    /**
+     * Length presets in the customise dialog (Short / Default / Long).
+     * Locale-bound visible text — optional, so a miss is not fatal.
+     */
+    audioLengthOption: {
+      short: [
+        'button:has-text("Short")',
+        'button:has-text("Kurz")',
+        'button:has-text("Court")',
+        'button:has-text("Corto")',
+        'button:has-text("Breve")',
+        'button:has-text("Kort")',
+        'button:has-text("短い")',
+      ],
+      default: [
+        'button:has-text("Default")',
+        'button:has-text("Standard")',
+        'button:has-text("Par défaut")',
+        'button:has-text("Predeterminado")',
+        'button:has-text("Predefinito")',
+        'button:has-text("Padrão")',
+        'button:has-text("デフォルト")',
+      ],
+      long: [
+        'button:has-text("Long")',
+        'button:has-text("Lang")',
+        'button:has-text("Largo")',
+        'button:has-text("Lungo")',
+        'button:has-text("Longo")',
+        'button:has-text("長い")',
+      ],
+    },
+    /** Container that holds every generated artifact tile. */
+    artifactLibrary: "artifact-library, .artifact-library-container",
+    /** Any artifact tile, ready or not. */
+    artifactItem: "artifact-library-item",
+    /**
+     * A tile that is still rendering.
+     *
+     * `.shimmer-blue` is the loading-shimmer class, and it held steady across
+     * the whole generation window when measured against the live UI.
+     *
+     * The tile's `mat-icon` is deliberately **not** used: it alternates between
+     * `sync` and `audio_magic_eraser` while the placeholder animates, so a
+     * single icon probe reports the wrong state at random intervals. Locales
+     * that somehow lack the shimmer class are still covered by the localised
+     * "come back in a few minutes" phrase list in `audio.ts`.
+     *
+     * Structurally the in-progress tile is otherwise identical to a finished
+     * one, which is why the pre-2026 "any tile means ready" logic reported
+     * success the instant generation started.
+     */
+    artifactGenerating: [
+      "artifact-library-item:has(.shimmer-blue)",
+      "artifact-library-item:has(.artifact-item-button--entering)",
+    ],
+    /**
+     * A finished Audio Overview tile: an artifact tile that is *not* showing
+     * the loading shimmer. Callers must combine this with a check that at
+     * least one tile exists, since `:not(:has(…))` matches nothing when the
+     * library is empty.
+     */
+    audioPlayer: [
+      "artifact-library-item:not(:has(.shimmer-blue)):not(:has(.artifact-item-button--entering))",
+      // Legacy layouts.
+      "artifact-library-item:has(button.artifact-action-button)",
+      "audio",
+    ],
+    /** Clickable surface of an artifact tile (opens the player). */
+    artifactOpenButton: [
+      "artifact-library-item button.artifact-stretched-button",
+      "artifact-library-item button.artifact-action-button",
     ],
     /**
      * Download trigger. The Studio panel uses an icon-only button with a
@@ -294,26 +502,12 @@ export const Selectors = {
       'button[aria-label*="ダウンロード" i]',
     ],
     /**
-     * Completed Audio-Overview tile. Modern NotebookLM does NOT mount a real
-     * `<audio>` element in the DOM; the player is a custom Angular tile
-     * inside `.artifact-library-container > artifact-library-item`. The
-     * play-button (`button.artifact-action-button` with locale-bound
-     * aria-label "Wiedergeben"/"Play"/…) is the most reliable "audio is
-     * ready" signal because it only mounts after generation completes.
-     */
-    audioPlayer: [
-      "artifact-library-item:has(button.artifact-action-button)",
-      ".artifact-library-container artifact-library-item",
-      // Legacy <audio> tag for older builds.
-      "audio",
-      '[role="audio"]',
-    ],
-    /**
-     * Per-tile "Mehr"/"More"/"Plus"/… three-dot button. Opens the menu that
+     * Per-tile "More"/"Mehr"/"Plus"/… three-dot button. Opens the menu that
      * contains the Download item.
      */
     audioMoreMenuButton: [
-      "artifact-library-item button:has(mat-icon:text-is(\"more_vert\"))",
+      'artifact-library-item button:has(mat-icon:text-is("more_vert"))',
+      'artifact-library-item [aria-label*="more" i] button',
       'artifact-library-item button[aria-label*="mehr" i]',
       'artifact-library-item button[aria-label*="more" i]',
       'artifact-library-item button[aria-label*="plus" i]',
@@ -340,8 +534,19 @@ export const Selectors = {
   },
 
   notebooks: {
-    projectCard: 'button[aria-labelledby*="project-"]',
+    /**
+     * Notebook card on the home page.
+     *
+     * 2026: each card is a `project-button` custom element wrapping a
+     * `mat-card`; the clickable surface is `a.primary-action-button[role="link"]`.
+     * The pre-2026 `button[aria-labelledby*="project-"]` matches nothing.
+     */
+    projectCard: "project-button",
+    projectCardLink: "project-button a.primary-action-button",
+    projectGrid: "project-grid",
     cardMenuButton: [
+      "project-action-button button",
+      'project-button button[aria-label*="menu" i]',
       'button[aria-label*="menu" i]',
       'button[aria-label*="options" i]',
       'button[aria-label*="more" i]',
@@ -378,6 +583,9 @@ export const Selectors = {
   /**
    * Material Icon labels that leak into extracted answer text as isolated
    * lines. Stripped from the response before delivery to the client.
+   *
+   * `expand_more` and `sync` were added in 2026: the thinking-chain block ends
+   * with an `expand_more` toggle and the Studio spinner renders `sync`.
    */
   uiControlLabels: new Set([
     "more_horiz",
@@ -387,6 +595,7 @@ export const Selectors = {
     "bookmark_border",
     "expand_more",
     "expand_less",
+    "chevron_forward",
     "thumb_up",
     "thumb_down",
     "share",
@@ -394,6 +603,9 @@ export const Selectors = {
     "keep_pin",
     "copy_all",
     "arrow_forward",
+    "sync",
+    "edit_fix_auto",
+    "sticky_note_2",
   ]),
 } as const;
 

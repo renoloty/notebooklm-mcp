@@ -5,6 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-08
+
+Compatibility release for Google's 2026 rebrand. NotebookLM is now **Gemini
+Notebook** and has moved to `notebook.google.com`; `notebooklm.google.com`
+answers with a **301 permanent redirect**. That one change, plus an Angular
+rewrite that reshaped much of the DOM, broke authentication, source ingestion,
+answer extraction and audio status detection. Everything below was verified
+against the live signed-in app on 2026-09-08.
+
+### Fixed
+
+- **Login was never detected.** Every success check was
+  `url.startsWith("https://notebooklm.google.com/")`. After the 301 the browser
+  sits on `notebook.google.com`, so the check could never pass: `setup_auth`,
+  `re_auth` and auto-login all ran to their full timeout and reported failure
+  on a session that had actually signed in. Host comparison now goes through
+  `notebooklm/urls.ts` and accepts both hosts.
+- **`add_source` could not open its dialog.** The notebook cover mounts an
+  emoji picker whose palette is a permanently-present, invisible `0x0`
+  `div[role="dialog"]` that sorts **before** real modals in document order. The
+  overlay anchor was a bare `[role="dialog"]` resolved with `.first()`, so it
+  latched onto that palette: waits for `visible` timed out, waits for `hidden`
+  returned instantly, and every dialog-scoped lookup searched the wrong
+  subtree. Anchored on `mat-dialog-container` instead.
+- **The "Add source" button selector matched nothing.** Buttons are now wrapped
+  in `nb-button` custom elements with the semantic class on the *wrapper*, so
+  `button.add-source-button` never matched. Uses `.add-source-button button`.
+- **The URL field is no longer an `<input>`.** The URL step renders a
+  `textarea` inside `mat-form-field.urls-input` (it accepts several
+  newline-separated URLs). `input[type="text"]` matched nothing.
+- **Answers arrived with the model's reasoning glued to the front.** Responses
+  now embed a `thinking-chain-view` block inside `.message-text-content`, so
+  extraction returned `"Thoughts Defining X... expand_moreThe real answer…"`.
+  Extraction targets `labs-tailwind-structural-element-view-v2` and strips
+  icon glyphs welded to adjacent text.
+- **`generate_audio` never started a render.** Clicking the Studio card only
+  opens a "Customize Audio Overview" dialog; nothing happens until its
+  Generate button is pressed. Without `custom_prompt` the old code stopped
+  after the card click and still reported `started`, leaving the dialog open.
+  Both paths now go through the dialog.
+- **`get_audio_status` reported `ready` immediately.** The in-progress and
+  finished tiles are the same `artifact-library-item` element, so "a tile
+  exists" was not a readiness signal — `download_audio` then ran against a
+  placeholder. Readiness is now the absence of the `.shimmer-blue` loading
+  class. The tile's `mat-icon` is deliberately unused: it alternates between
+  `sync` and `audio_magic_eraser` while generating.
+- **First-run accounts hung on every call.** A Google account that has never
+  opened the product gets a blocking "Welcome to Gemini Notebook"
+  `legal-notice-dialog`; its backdrop swallows every click underneath. Now
+  dismissed automatically on session start and before opening the add-source
+  dialog. The marketing opt-in checkbox is explicitly left unchecked.
+- **`sessionStorage` was never restored.** Its origin guard compared the page
+  URL against the configured notebook URL by string equality, which the 301
+  broke for any saved `notebooklm.google.com` entry.
+- **The first question of every session timed out.** patchright 1.56.0's
+  `Locator.last()` resolves to nothing when the locator matches exactly one
+  element — the state on a session's first answer. Answer extraction caught
+  the timeout, returned `null`, and the poller burned the full answer timeout
+  for a response that was on screen the whole time. Worked around in
+  `utils/locators.ts`; a test asserts when the workaround can be dropped.
+- **`ignoreTexts` never matched.** `snapshotPriorAnswers` read raw containers
+  while the poller compared thinking-stripped text, so every prior-answer
+  entry was a guaranteed miss. Both now use the same extraction path.
+- **Long answers could never settle.** A response containing "thinking",
+  "searching" or "loading" matched the loading-placeholder list and was
+  rejected on every poll. The substring test is now limited to text short
+  enough to actually be a placeholder.
+- **Notebook cards on the home page.** `button[aria-labelledby*="project-"]`
+  is gone; cards are `project-button` elements.
+
+### Added
+
+- `src/notebooklm/urls.ts` — one place that owns the notebook host, with
+  normalisation, `/u/N/` multi-account preservation and 301-tolerant origin
+  comparison. Library entries, session cache keys and `NOTEBOOK_URL` all pass
+  through it, so legacy URLs keep working and stop spawning duplicate sessions.
+- `src/notebooklm/dialogs.ts` — blocking-modal dismissal.
+- `src/utils/locators.ts` — the `.last()` workaround, documented.
+- **A test suite** (`npm test`, 48 assertions). Selectors run with real
+  Playwright syntax against a fixture reproducing the live DOM, so
+  `:has-text()` / `:text-is()` / `:has()` are actually exercised. Every 2026
+  breakage is asserted twice: the new selector works, and the pre-2026 one
+  matches nothing. No network, no Google account, no credentials needed.
+
+### Changed
+
+- Selector registry rewritten around Angular component tags, which the 2026
+  layout made the most stable anchor. Documents the nine Studio artifact types
+  (Audio Overview, Slide Deck, Video Overview, Mind Map, Reports, Flashcards,
+  Quiz, Infographic, Data Table).
+- Docs and tool descriptions now use `notebook.google.com`.
+
+### Compatibility
+
+Existing library entries and `NOTEBOOK_URL` values on `notebooklm.google.com`
+are normalised automatically — no user action required. Saved cookies are
+unaffected: they were always scoped to `google.com`.
+
 ## [2.0.0] - 2026-04-30
 
 Major release that closes the issue backlog and replaces the brittle parts of

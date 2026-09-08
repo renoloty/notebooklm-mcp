@@ -1,0 +1,290 @@
+<!doctype html>
+<!--
+  Fixture reproducing the 2026 Gemini Notebook (notebook.google.com) DOM.
+
+  Structure, tag names, class names and `mat-icon` glyph text below were read
+  off the live signed-in app, not invented. The point of the fixture is to let
+  the selector registry be exercised with real Playwright selector syntax
+  (`:has-text()`, `:text-is()`, `:has()`, `:not()`), which cannot be evaluated
+  through `document.querySelectorAll` in a browser console.
+
+  Two details are deliberate and load-bearing:
+
+    1. The emoji-picker `div[role="dialog"]` is emitted BEFORE the
+       `cdk-overlay-container`, mirroring live document order. That ordering is
+       what made a bare `[role="dialog"]` + `.first()` resolve to an invisible
+       0x0 element instead of the real modal.
+
+    2. The artifact tile is the SAME element whether generating or ready — only
+       `.shimmer-blue` and the label change. That is why "a tile exists" is not
+       a usable readiness signal.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture — Gemini Notebook</title>
+    <style>
+      /* Playwright's visibility model needs real boxes. The emoji palette is
+         explicitly sized 0x0 + hidden, exactly as the live app renders it. */
+      body {
+        margin: 0;
+        font-family: sans-serif;
+      }
+      .emoji-palette {
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        visibility: hidden;
+      }
+      mat-dialog-container {
+        display: block;
+        width: 800px;
+        height: 500px;
+      }
+      button,
+      [role="button"] {
+        display: inline-block;
+        min-width: 40px;
+        min-height: 20px;
+      }
+      .single-source-container {
+        display: block;
+        height: 20px;
+      }
+      artifact-library-item {
+        display: block;
+        height: 60px;
+      }
+      /* Angular components carry `display: block` from their own stylesheets;
+         custom elements default to `inline` otherwise, which collapses the
+         layout and makes Playwright treat visible text as hidden. */
+      studio-panel,
+      chat-panel,
+      source-picker,
+      chat-message,
+      chat-panel-header,
+      query-box,
+      labs-tailwind-doc-viewer,
+      element-list-renderer,
+      thinking-chain-view,
+      labs-tailwind-structural-element-view-v2,
+      basic-create-artifact-button,
+      artifact-library,
+      mat-card,
+      mat-card-content,
+      mat-card-actions,
+      add-sources-dialog,
+      mat-form-field,
+      mat-dialog-actions,
+      nb-button,
+      xap-emoji-picker {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <labs-tailwind-root>
+      <!-- ================= SOURCES PANEL ================= -->
+      <source-picker class="source-sorting-enabled">
+        <div class="contents">
+          <div class="button-row">
+            <!-- 2026: the semantic class sits on the nb-button WRAPPER.
+                 `button.add-source-button` matches nothing here. -->
+            <nb-button
+              class="add-source-button has-icon nb-button nb-button-size-small"
+              aria-label="Add source"
+            >
+              <button aria-label="Add source">
+                <mat-icon class="google-symbols">add</mat-icon>
+              </button>
+            </nb-button>
+          </div>
+          <div class="scroll-container">
+            <div class="single-source-container">Source one</div>
+            <div class="single-source-container">Source two</div>
+            <div class="single-source-container">Source three</div>
+          </div>
+        </div>
+      </source-picker>
+
+      <!-- ================= CHAT PANEL ================= -->
+      <chat-panel>
+        <chat-panel-header>
+          <div class="cover-image">
+            <span class="xap-emoji-picker-trigger cover-emoji">
+              <xap-emoji-picker>
+                <!-- Permanently mounted, invisible, and FIRST in document
+                     order. This is the distractor that broke overlay lookups. -->
+                <div role="dialog" aria-label="Emoji characters palette" class="emoji-palette">
+                  Search results No emoji found Recently used
+                </div>
+              </xap-emoji-picker>
+            </span>
+            <div class="cover-content">
+              <h2 class="cover-title">Fixture notebook</h2>
+              <div class="cover-subtitle">
+                <span class="cover-subtitle-source-count">3 sources</span>
+              </div>
+            </div>
+          </div>
+        </chat-panel-header>
+
+        <chat-message class="individual-message">
+          <div class="from-user-container">
+            <div class="message-text-content">What is MCP in one sentence?</div>
+          </div>
+        </chat-message>
+
+        <chat-message class="individual-message">
+          <div class="to-user-container">
+            <mat-card class="to-user-message-card-content">
+              <mat-card-content class="message-content to-user-message-inner-content">
+                <div class="message-text-content">
+                  <labs-tailwind-doc-viewer>
+                    <element-list-renderer>
+                      <!-- Reasoning block: must NOT reach the client. Ends with
+                           an `expand_more` glyph that welds onto the next node's
+                           text in innerText. -->
+                      <thinking-chain-view
+                        >Thoughts Defining MCP... Clarifying MCP Definition...<mat-icon
+                          class="google-symbols"
+                          >expand_more</mat-icon
+                        ></thinking-chain-view
+                      >
+                      <labs-tailwind-structural-element-view-v2
+                        >The Model Context Protocol (MCP) is an open standard for connecting AI
+                        systems to external data.<button class="citation-marker">
+                          1
+                        </button></labs-tailwind-structural-element-view-v2
+                      >
+                    </element-list-renderer>
+                  </labs-tailwind-doc-viewer>
+                </div>
+              </mat-card-content>
+              <mat-card-actions class="message-actions">
+                <button class="pin-button">
+                  <mat-icon class="google-symbols">keep_pin</mat-icon><span>Save to note</span>
+                </button>
+              </mat-card-actions>
+            </mat-card>
+          </div>
+        </chat-message>
+
+        <query-box>
+          <textarea class="query-box-input" aria-label="Query box"></textarea>
+          <button class="submit-button" aria-label="Send">
+            <mat-icon>arrow_forward</mat-icon>
+          </button>
+        </query-box>
+      </chat-panel>
+
+      <!-- ================= STUDIO PANEL ================= -->
+      <studio-panel class="studio-panel">
+        <div class="create-artifact-buttons-container">
+          <basic-create-artifact-button>
+            <div
+              class="blue create-artifact-button-container"
+              role="button"
+              aria-label="Audio Overview"
+            >
+              <span class="icon-container-row"
+                ><mat-icon class="google-symbols">audio_magic_eraser</mat-icon></span
+              >
+              <span class="create-label-container">Audio Overview</span>
+              <mat-icon class="edit-icon google-symbols">chevron_forward</mat-icon>
+            </div>
+          </basic-create-artifact-button>
+          <basic-create-artifact-button>
+            <div
+              class="yellow create-artifact-button-container"
+              role="button"
+              aria-label="Slide Deck"
+            >
+              <span class="icon-container-row"
+                ><mat-icon class="google-symbols">tablet</mat-icon></span
+              >
+              <span class="create-label-container">Slide Deck</span>
+              <mat-icon class="edit-icon google-symbols">chevron_forward</mat-icon>
+            </div>
+          </basic-create-artifact-button>
+          <basic-create-artifact-button>
+            <div
+              class="green create-artifact-button-container"
+              role="button"
+              aria-label="Video Overview"
+            >
+              <span class="icon-container-row"
+                ><mat-icon class="google-symbols">subscriptions</mat-icon></span
+              >
+              <span class="create-label-container">Video Overview</span>
+              <mat-icon class="edit-icon google-symbols">chevron_forward</mat-icon>
+            </div>
+          </basic-create-artifact-button>
+        </div>
+
+        <artifact-library>
+          <!-- Toggle `data-state` from the test to switch generating/ready. -->
+          <artifact-library-item id="tile">
+            <div class="artifact-item-button shimmer-blue artifact-item-button--entering">
+              <button class="artifact-stretched-button"></button>
+              <div class="artifact-primary-content">
+                <div class="artifact-icon-wrapper">
+                  <mat-icon class="artifact-icon material-symbols-outlined">sync</mat-icon>
+                </div>
+                <span class="artifact-labels">
+                  <span class="artifact-title">Generating Audio Overview...</span>
+                  <span class="artifact-detail">Come back in a few minutes</span>
+                </span>
+              </div>
+            </div>
+          </artifact-library-item>
+        </artifact-library>
+      </studio-panel>
+    </labs-tailwind-root>
+
+    <!-- ================= MATERIAL OVERLAY CONTAINER =================
+         Appended to <body> by Angular Material, i.e. AFTER the app content
+         that holds the emoji palette. -->
+    <div class="cdk-overlay-container">
+      <mat-dialog-container role="dialog">
+        <add-sources-dialog>
+          <div class="dialog-container state-main">
+            <div class="drop-zone-actions">
+              <button class="drop-zone-icon-button">
+                <mat-icon class="google-symbols">upload</mat-icon>Upload files
+              </button>
+              <button class="drop-zone-icon-button">
+                <mat-icon class="google-symbols">link</mat-icon
+                ><mat-icon class="google-symbols">video_youtube</mat-icon>Websites
+              </button>
+              <button class="drop-zone-icon-button">
+                <mat-icon class="google-symbols">drive</mat-icon>Drive
+              </button>
+              <button class="drop-zone-icon-button">
+                <mat-icon class="google-symbols">content_paste</mat-icon>Copied text
+              </button>
+            </div>
+            <div class="urls-container">
+              <mat-form-field class="urls-input">
+                <textarea aria-label="Enter URLs" placeholder="Paste any links"></textarea>
+              </mat-form-field>
+            </div>
+            <mat-dialog-actions>
+              <button class="mdc-icon-button back-button" aria-label="Back">
+                <mat-icon>arrow_back</mat-icon>
+              </button>
+              <button
+                class="mdc-button mdc-button--unelevated mat-mdc-unelevated-button mat-primary"
+              >
+                Insert
+              </button>
+              <button class="mdc-icon-button close-button" aria-label="Close">
+                <mat-icon>close</mat-icon>
+              </button>
+            </mat-dialog-actions>
+          </div>
+        </add-sources-dialog>
+      </mat-dialog-container>
+    </div>
+  </body>
+</html>
