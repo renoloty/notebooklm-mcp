@@ -74,6 +74,13 @@ against the live signed-in app on 2026-09-08.
   enough to actually be a placeholder.
 - **Notebook cards on the home page.** `button[aria-labelledby*="project-"]`
   is gone; cards are `project-button` elements.
+- **`?authuser=` was being stripped from notebook URLs.** It is one of the two
+  ways Google selects an account, so dropping it reopened the notebook as the
+  browser's *default* account — for a notebook owned by a secondary account
+  that lands on an "Access Request" page. Preserved alongside `/u/<n>/`.
+- **The version in the MCP handshake was hardcoded** in three places and had
+  drifted to `2.0.0`. Now read from `package.json`, so the version a client
+  reports in a bug report is the version that is running.
 
 ### Added
 
