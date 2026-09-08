@@ -46,6 +46,7 @@ import { CliHandler } from "./utils/cli-handler.js";
 import { CONFIG, ensureDirectories } from "./config.js";
 import { startHttpTransport } from "./transport/http.js";
 import { log } from "./utils/logger.js";
+import { VERSION } from "./version.js";
 
 /**
  * Server-level instructions consumed by MCP clients during initialization.
@@ -153,7 +154,7 @@ class NotebookLMMCPServer {
     this.server = new Server(
       {
         name: "notebooklm-mcp",
-        version: "2.0.0",
+        version: VERSION,
       },
       {
         capabilities: {
@@ -191,7 +192,7 @@ class NotebookLMMCPServer {
 
     const activeSettings = this.settingsManager.getEffectiveSettings();
     log.info("🚀 NotebookLM MCP Server initialized");
-    log.info(`  Version: 2.0.0`);
+    log.info(`  Version: ${VERSION}`);
     log.info(`  Node: ${process.version}`);
     log.info(`  Platform: ${process.platform}`);
     log.info(`  Profile: ${activeSettings.profile} (${this.toolDefinitions.length} tools active)`);
@@ -623,9 +624,9 @@ async function main() {
   // Print banner
   console.error("╔══════════════════════════════════════════════════════════╗");
   console.error("║                                                          ║");
-  console.error("║           NotebookLM MCP Server v2.0.0                   ║");
+  console.error(`║${`  Gemini Notebook MCP Server v${VERSION}`.padEnd(58)}║`);
   console.error("║                                                          ║");
-  console.error("║   Chat with Gemini 2.5 through NotebookLM via MCP       ║");
+  console.error("║   Chat with Gemini through Google's notebook via MCP     ║");
   console.error("║                                                          ║");
   console.error("╚══════════════════════════════════════════════════════════╝");
   console.error("");
